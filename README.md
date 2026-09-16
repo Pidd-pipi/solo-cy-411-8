@@ -66,12 +66,11 @@ npm run dev
 ├── .env
 ├── .env.example
 ├── database/
-│   ├── init.sql
-│   └── migrations/
-│       └── 002_factor_versions.sql
+│   └── init.sql            # 仅空数据卷首次初始化的基础结构（v1）
 ├── backend/
 │   ├── Dockerfile
 │   └── src/
+│       ├── migrations/     # 启动时幂等迁移（新库/旧库同一套流程）
 │       ├── routes/
 │       ├── controllers/
 │       ├── services/
@@ -124,7 +123,7 @@ npm run dev
 - User：`database/init.sql` → `backend/src/models/user.ts` → `backend/src/services/userService.ts` → `backend/src/controllers/userController.ts` → `backend/src/routes/users.ts` → `frontend/src/api/user.ts` → `frontend/src/stores/userStore.ts` → `frontend/src/pages/Profile.tsx`
 - Activity：`database/init.sql` → `backend/src/models/activity.ts` → `backend/src/services/activityService.ts` → `backend/src/controllers/activityController.ts` → `backend/src/routes/activities.ts` → `frontend/src/api/activity.ts` → `frontend/src/stores/activityStore.ts` → `frontend/src/pages/Activities.tsx`
 - Goal：`database/init.sql` → `backend/src/models/goal.ts` → `backend/src/services/goalService.ts` → `backend/src/controllers/goalController.ts` → `backend/src/routes/goals.ts` → `frontend/src/api/goal.ts` → `frontend/src/stores/goalStore.ts` → `frontend/src/pages/Goals.tsx`
-- CarbonFactor：`database/init.sql`（含 `database/migrations/002_factor_versions.sql`）→ `backend/src/models/carbonFactor.ts` → `backend/src/services/factorService.ts` → `backend/src/controllers/factorController.ts` → `backend/src/routes/factors.ts` → `frontend/src/api/factor.ts` → `frontend/src/constants/factor.ts` → `frontend/src/pages/Factors.tsx`
+- CarbonFactor：`database/init.sql`（基础结构）→ `backend/src/migrations/002_factor_versions.ts`（启动迁移补齐版本结构）→ `backend/src/models/carbonFactor.ts` → `backend/src/services/factorService.ts` → `backend/src/controllers/factorController.ts` → `backend/src/routes/factors.ts` → `frontend/src/api/factor.ts` → `frontend/src/constants/factor.ts` → `frontend/src/pages/Factors.tsx`
 
 ## 因子版本与生效期（固化口径）
 
@@ -140,7 +139,17 @@ npm run dev
   新增或修改活动时，后端按 `record_date` 用 `effective_date <= record_date` 取最近的启用版本计算 `carbon_value` 并写入快照；
   之后发布新版本或停用旧版本都**不会回写**旧活动。仪表盘、目标进度、排行榜始终汇总活动的固化 `carbon_value`。
 - 停用版本只影响之后的“按日期匹配”，不删除版本、不影响已引用活动。
-- 老库升级：首次启动由 `database/migrations/002_factor_versions.sql` 幂等补列、补唯一约束并回填历史活动快照（存量因子视为 2000-01-01 生效的 v1）。
+
+## 数据库升级（新库 / 旧库同一套流程）
+
+- 结构升级**不依赖** `docker-entrypoint-initdb.d`（那里的 `init.sql` 只在数据卷为空时执行一次，已有数据卷会跳过，无法升级旧库）。
+- 升级统一由**后端启动迁移**完成：`main.ts` 在建立连接后、监听端口前运行 `backend/src/migrations/runner.ts`。
+  - `schema_migrations` 表记录已应用版本；已应用的版本直接跳过，重复升级不会重复建结构或丢数据。
+  - 每条 DDL 前先查 `information_schema` 判断列/索引是否存在，因此同一套步骤对**全新库和旧库都幂等**：新库由 `init.sql` 建基础表，002 再补 `version/effective_date/status/created_at`、唯一约束和活动快照列；旧库则补齐缺失的同名对象。
+  - 002 会把存量因子回填为自 `2000-01-01` 起生效的 `v1`，并按 `factor_id` 回填历史活动的 `factor_version/factor_value_snapshot/factor_effective_date`；已固化的行不覆盖。
+  - 加唯一约束前先检测存量重复数据，发现冲突直接报错并中止，保留原数据。
+- **失败即停**：迁移或数据库连接失败时进程 `exit(1)`，不监听端口、不会带着缺字段的库继续对外服务；所有变更均为 additive，修正数据后重启即可续跑（已完成的步骤会跳过）。
+- 升级完成后，原有因子、活动、目标、排行榜与角色权限保持不变。
 
 ## 横切关注点
 

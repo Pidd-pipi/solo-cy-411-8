@@ -1,3 +1,8 @@
+-- CarbonTrack 基础结构（v1，未含因子版本化）。
+-- 注意：本文件只在 MySQL 数据卷为空（全新初始化）时由 docker-entrypoint-initdb.d 执行一次。
+-- 因子版本/生效期/状态与活动快照列不在此文件中，统一由“后端启动迁移”002 补齐，
+-- 这样全新库与已有旧库走同一套幂等升级流程（见 backend/src/migrations）。
+
 CREATE TABLE IF NOT EXISTS roles (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   name VARCHAR(32) NOT NULL UNIQUE,
@@ -23,10 +28,8 @@ CREATE TABLE IF NOT EXISTS user_roles (
   CONSTRAINT fk_user_roles_role FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE
 );
 
--- CarbonFactor 现在是“版本化因子”：同一 region + category + sub_type 下，
--- 每个生效日期最多一个版本（uk_factor_version）。
--- 生效区间为左闭右开 [effective_date, 下一版本 effective_date)，
--- 因此同一地区/分类/子类型在任一日期只会匹配到一个生效版本。
+-- 基础因子表（无版本列）；002 迁移将增加 version / effective_date / status / created_at
+-- 与唯一约束，把时间轴切成互不重叠的生效区间。
 CREATE TABLE IF NOT EXISTS carbon_factors (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   category ENUM('transport','energy','food','shopping') NOT NULL,
@@ -34,27 +37,16 @@ CREATE TABLE IF NOT EXISTS carbon_factors (
   factor_value DECIMAL(12,4) NOT NULL,
   unit VARCHAR(32) NOT NULL,
   region VARCHAR(64) NOT NULL,
-  version INT NOT NULL DEFAULT 1,
-  effective_date DATE NOT NULL,
-  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  KEY idx_factor_category_region (category, region),
-  KEY idx_factor_match (region, category, sub_type, status, effective_date),
-  CONSTRAINT uk_factor_version UNIQUE KEY (region, category, sub_type, effective_date),
-  CONSTRAINT uk_factor_version_no UNIQUE KEY (region, category, sub_type, version)
+  KEY idx_factor_category_region (category, region)
 );
 
--- activities 固化创建/修改当时匹配到的因子版本：
--- factor_id 指向具体版本行；factor_version / factor_value_snapshot / factor_effective_date
--- 作为冗余快照，后续发布或停用版本都不会改变既有活动的 carbon_value。
+-- 基础活动表（无快照列）；002 迁移将增加 factor_version / factor_value_snapshot /
+-- factor_effective_date，用于固化当时匹配到的因子版本。
 CREATE TABLE IF NOT EXISTS activities (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   user_id BIGINT NOT NULL,
   factor_id BIGINT NULL,
-  factor_version INT NULL,
-  factor_value_snapshot DECIMAL(12,4) NULL,
-  factor_effective_date DATE NULL,
   category ENUM('transport','energy','food','shopping') NOT NULL,
   sub_type VARCHAR(64) NOT NULL,
   amount DECIMAL(12,2) NOT NULL,
@@ -105,29 +97,22 @@ INSERT IGNORE INTO users (id, username, email, password_hash, avatar, region) VA
 INSERT IGNORE INTO user_roles (user_id, role_id) VALUES
   (1, 1), (1, 2), (2, 2), (3, 2);
 
--- 既有因子作为各地区的 v1，从很早的日期起生效，保证历史活动都能匹配。
-INSERT IGNORE INTO carbon_factors
-  (id, category, sub_type, factor_value, unit, region, version, effective_date, status)
-VALUES
-  (1, 'transport', 'metro', 0.0520, 'km', 'Shanghai', 1, '2000-01-01', 'active'),
-  (2, 'transport', 'gasoline-car', 0.1920, 'km', 'Shanghai', 1, '2000-01-01', 'active'),
-  (3, 'energy', 'electricity', 0.5700, 'kWh', 'Shanghai', 1, '2000-01-01', 'active'),
-  (4, 'food', 'beef-meal', 6.2000, 'meal', 'Shanghai', 1, '2000-01-01', 'active'),
-  (5, 'shopping', 'parcel', 1.1000, 'item', 'Shanghai', 1, '2000-01-01', 'active'),
-  (6, 'energy', 'electricity', 0.5300, 'kWh', 'Hangzhou', 1, '2000-01-01', 'active'),
-  (7, 'transport', 'bus', 0.0890, 'km', 'Beijing', 1, '2000-01-01', 'active'),
-  -- 一条尚未生效的 v2（30 天后生效），用于演示“未来生效版本”。
-  (8, 'energy', 'electricity', 0.6100, 'kWh', 'Shanghai', 2, DATE_ADD(CURRENT_DATE(), INTERVAL 30 DAY), 'active');
+-- 基础种子因子；迁移后全部成为各地区自 2000-01-01 起生效的 v1。
+INSERT IGNORE INTO carbon_factors (id, category, sub_type, factor_value, unit, region) VALUES
+  (1, 'transport', 'metro', 0.0520, 'km', 'Shanghai'),
+  (2, 'transport', 'gasoline-car', 0.1920, 'km', 'Shanghai'),
+  (3, 'energy', 'electricity', 0.5700, 'kWh', 'Shanghai'),
+  (4, 'food', 'beef-meal', 6.2000, 'meal', 'Shanghai'),
+  (5, 'shopping', 'parcel', 1.1000, 'item', 'Shanghai'),
+  (6, 'energy', 'electricity', 0.5300, 'kWh', 'Hangzhou'),
+  (7, 'transport', 'bus', 0.0890, 'km', 'Beijing');
 
-INSERT IGNORE INTO activities
-  (id, user_id, factor_id, factor_version, factor_value_snapshot, factor_effective_date,
-   category, sub_type, amount, unit, carbon_value, record_date, note)
-VALUES
-  (1, 1, 1, 1, 0.0520, '2000-01-01', 'transport', 'metro', 22.50, 'km', 1.17, CURRENT_DATE(), 'Morning commute'),
-  (2, 1, 3, 1, 0.5700, '2000-01-01', 'energy', 'electricity', 18.00, 'kWh', 10.26, DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY), 'Office lighting'),
-  (3, 1, 4, 1, 6.2000, '2000-01-01', 'food', 'beef-meal', 1.00, 'meal', 6.20, DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY), 'Client lunch'),
-  (4, 2, 6, 1, 0.5300, '2000-01-01', 'energy', 'electricity', 26.00, 'kWh', 13.78, DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY), 'Store energy'),
-  (5, 3, 7, 1, 0.0890, '2000-01-01', 'transport', 'bus', 18.00, 'km', 1.60, CURRENT_DATE(), 'Supplier visit');
+INSERT IGNORE INTO activities (id, user_id, factor_id, category, sub_type, amount, unit, carbon_value, record_date, note) VALUES
+  (1, 1, 1, 'transport', 'metro', 22.50, 'km', 1.17, CURRENT_DATE(), 'Morning commute'),
+  (2, 1, 3, 'energy', 'electricity', 18.00, 'kWh', 10.26, DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY), 'Office lighting'),
+  (3, 1, 4, 'food', 'beef-meal', 1.00, 'meal', 6.20, DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY), 'Client lunch'),
+  (4, 2, 6, 'energy', 'electricity', 26.00, 'kWh', 13.78, DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY), 'Store energy'),
+  (5, 3, 7, 'transport', 'bus', 18.00, 'km', 1.60, CURRENT_DATE(), 'Supplier visit');
 
 INSERT IGNORE INTO goals (id, user_id, title, target_value, period_type, start_date, end_date, status) VALUES
   (1, 1, 'Keep June emissions under 120 kg', 120.00, 'month', DATE_FORMAT(CURRENT_DATE(), '%Y-%m-01'), LAST_DAY(CURRENT_DATE()), 'active'),
