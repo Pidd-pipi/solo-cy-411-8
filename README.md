@@ -49,6 +49,17 @@ npm run dev
 
 本地开发时前端 Vite 会把 `/api` 代理到 `http://localhost:19411`。生产 Docker 中由 Nginx 将 `/api/` 反向代理到 `http://backend:3000/`，前端代码不硬编码 localhost。
 
+### 因子版本回归测试（真实数据库 + 真实进程）
+
+回归测试不使用内存替身：用真实 MySQL/MariaDB，并 `spawn` 真实的 `dist/main.js` 发真实 HTTP 请求，覆盖空库初始化、旧库升级、重复启动幂等、迁移冲突阻断启动、重叠/并发发布、按活动日期固化、停用与再发布不改旧快照、权限与非法日期等。详见 [`backend/test/regression/README.md`](backend/test/regression/README.md)。
+
+```bash
+cd backend
+npm run build
+npm run provision:mysql      # 优先 docker mysql:8.0；无 docker 时回退用户态 MariaDB；或设 MYSQL_TEST_EXTERNAL=1 用外部库
+npm run test:regression      # 可重复运行
+```
+
 ## 技术栈
 
 | 层级 | 技术 |
