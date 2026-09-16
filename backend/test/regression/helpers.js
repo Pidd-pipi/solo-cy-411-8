@@ -119,7 +119,7 @@ async function indexExists(pool, table, index) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function buildServerEnv(database, port, jwtSecret, logLevel) {
+function buildServerEnv(database, port, jwtSecret, logLevel, extraEnv) {
   return {
     ...process.env,
     NODE_ENV: 'test',
@@ -131,16 +131,17 @@ function buildServerEnv(database, port, jwtSecret, logLevel) {
     DB_USER: DB_ADMIN_USER,
     DB_PASSWORD: DB_ADMIN_PASS,
     JWT_SECRET: jwtSecret,
-    TYPEORM_SYNC: 'false'
+    TYPEORM_SYNC: 'false',
+    ...(extraEnv || {})
   };
 }
 
 /** 仅启动子进程并返回句柄，不等待健康（用于测试“基础表尚未就绪时等待”/多实例并发）。 */
-async function spawnServer({ database, port, jwtSecret = 'regtest-secret', logLevel } = {}) {
+async function spawnServer({ database, port, jwtSecret = 'regtest-secret', logLevel, extraEnv } = {}) {
   const listenPort = port || (await getFreePort());
   const child = spawn(process.execPath, [path.join(REPO_ROOT, 'backend', 'dist', 'main.js')], {
     cwd: path.join(REPO_ROOT, 'backend'),
-    env: buildServerEnv(database, listenPort, jwtSecret, logLevel),
+    env: buildServerEnv(database, listenPort, jwtSecret, logLevel, extraEnv),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let out = '';
@@ -184,9 +185,10 @@ async function startServer({
   expectFailure = false,
   jwtSecret = 'regtest-secret',
   logLevel,
+  extraEnv,
   startupTimeoutMs = 90000
 } = {}) {
-  const handle = await spawnServer({ database, port, jwtSecret, logLevel });
+  const handle = await spawnServer({ database, port, jwtSecret, logLevel, extraEnv });
 
   const exited = new Promise((resolve) => handle.child.on('exit', (code) => resolve(code)));
 
@@ -228,6 +230,20 @@ async function stopServer(child) {
   });
 }
 
+/** 强制终止（模拟实例在迁移中途被 kill -9 / OOM / 节点故障），不等待清理。 */
+async function killServerHard(child) {
+  if (!child || child.exitCode !== null) return;
+  child.kill('SIGKILL');
+  await new Promise((resolve) => child.on('exit', () => resolve()));
+}
+
+function waitForExit(child, timeoutMs = 60000) {
+  return Promise.race([
+    new Promise((resolve) => child.on('exit', (code) => resolve(code))),
+    sleep(timeoutMs).then(() => '__timeout__')
+  ]);
+}
+
 /**
  * 在同一数据源上“并发”启动 n 个真实实例（模拟多副本同时发布）。
  * - expectFailure=true：等待每个实例都以非零码退出（迁移失败，全体拒绝服务）。
@@ -238,10 +254,11 @@ async function startCluster({
   count = 2,
   expectFailure = false,
   logLevel = 'info',
+  extraEnv,
   startupTimeoutMs = 90000
 } = {}) {
   const handles = await Promise.all(
-    Array.from({ length: count }, () => spawnServer({ database, logLevel }))
+    Array.from({ length: count }, () => spawnServer({ database, logLevel, extraEnv }))
   );
 
   if (expectFailure) {
@@ -312,6 +329,9 @@ async function login(base, email, password = 'password123') {
 module.exports = {
   DB_HOST,
   DB_PORT,
+  DB_ADMIN_USER,
+  DB_ADMIN_PASS,
+  adminConnection,
   provisionFresh,
   provisionLegacy,
   recreateDatabase,
@@ -325,6 +345,8 @@ module.exports = {
   loadInitIntoExisting,
   getFreePort,
   stopServer,
+  killServerHard,
+  waitForExit,
   mutateRaw,
   api,
   login,

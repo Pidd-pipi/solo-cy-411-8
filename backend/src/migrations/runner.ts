@@ -9,6 +9,12 @@ import { MigrationContext } from './types';
 // 拿到锁后复查 schema_migrations 直接复用结果，绝不重复建列/建索引。
 const LOCK_WAIT_TIMEOUT_SECONDS = Number(process.env.MIGRATION_LOCK_TIMEOUT || 120);
 
+// GET_LOCK 名称上限 64 字符；按库名哈希，使不同数据源互不阻塞。
+// 导出供运维/回归测试用同一真实来源计算锁名，避免算法在多处复制后漂移。
+export function migrationLockName(database: string): string {
+  return `ct_migrate_${createHash('sha1').update(String(database)).digest('hex').slice(0, 40)}`;
+}
+
 async function countRows(qr: QueryRunner, sql: string, params: unknown[] = []): Promise<number> {
   const rows: unknown = await qr.query(sql, params);
   return Number((Array.isArray(rows) ? (rows as any[])[0]?.cnt : 0) ?? 0);
@@ -79,8 +85,7 @@ function buildContext(qr: QueryRunner): MigrationContext {
 export class MigrationRunner {
   async run(dataSource: DataSource): Promise<void> {
     const dbName = (dataSource.options as { database?: string }).database || 'default';
-    // GET_LOCK 名称上限 64 字符；按库名哈希，使不同数据源互不阻塞。
-    const lockName = `ct_migrate_${createHash('sha1').update(String(dbName)).digest('hex').slice(0, 40)}`;
+    const lockName = migrationLockName(dbName);
 
     // 专用连接持有咨询锁：MySQL 命名锁是“连接级”的，必须在同一连接上 GET/RELEASE，
     // 因此整个迁移过程都在这一个 QueryRunner 连接内完成。
