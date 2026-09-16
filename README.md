@@ -25,10 +25,12 @@ docker compose down
 
 - 用户注册、登录、JWT 认证和 RBAC 权限校验
 - 活动记录新增、编辑、删除、分类筛选和分页列表
-- CarbonFactor 按地区与分类匹配并自动计算 `carbon_value`
+- CarbonFactor **版本化与生效期**：管理员可发布未来生效的新区域因子、修正尚未生效的版本、停用/重新启用版本
+- 新增或修改活动时按**活动日期**匹配当时生效的因子版本并固化（factor_version、因子值快照、生效日期），后续发布或停用不会改变旧活动的 `carbon_value`
+- 同一地区 + 分类 + 子类型在任一日期至多一个生效版本，重叠发布返回 409，并发发布由数据库唯一约束保证只成功一次
 - 仪表盘展示今日、本周、本月碳排放和趋势图
 - 目标管理展示目标完成进度和到期区间
-- 排行榜按地区和时间段查看用户低碳排名
+- 排行榜按地区和时间段查看用户低碳排名（均使用各活动固化结果）
 - 管理员查看操作审计日志
 
 ## 本地开发方式（备选）
@@ -64,7 +66,9 @@ npm run dev
 ├── .env
 ├── .env.example
 ├── database/
-│   └── init.sql
+│   ├── init.sql
+│   └── migrations/
+│       └── 002_factor_versions.sql
 ├── backend/
 │   ├── Dockerfile
 │   └── src/
@@ -120,7 +124,23 @@ npm run dev
 - User：`database/init.sql` → `backend/src/models/user.ts` → `backend/src/services/userService.ts` → `backend/src/controllers/userController.ts` → `backend/src/routes/users.ts` → `frontend/src/api/user.ts` → `frontend/src/stores/userStore.ts` → `frontend/src/pages/Profile.tsx`
 - Activity：`database/init.sql` → `backend/src/models/activity.ts` → `backend/src/services/activityService.ts` → `backend/src/controllers/activityController.ts` → `backend/src/routes/activities.ts` → `frontend/src/api/activity.ts` → `frontend/src/stores/activityStore.ts` → `frontend/src/pages/Activities.tsx`
 - Goal：`database/init.sql` → `backend/src/models/goal.ts` → `backend/src/services/goalService.ts` → `backend/src/controllers/goalController.ts` → `backend/src/routes/goals.ts` → `frontend/src/api/goal.ts` → `frontend/src/stores/goalStore.ts` → `frontend/src/pages/Goals.tsx`
-- CarbonFactor：`database/init.sql` → `backend/src/models/carbonFactor.ts` → `backend/src/services/factorService.ts` → `backend/src/controllers/factorController.ts` → `backend/src/routes/factors.ts` → `frontend/src/api/factor.ts` → `frontend/src/pages/Activities.tsx`
+- CarbonFactor：`database/init.sql`（含 `database/migrations/002_factor_versions.sql`）→ `backend/src/models/carbonFactor.ts` → `backend/src/services/factorService.ts` → `backend/src/controllers/factorController.ts` → `backend/src/routes/factors.ts` → `frontend/src/api/factor.ts` → `frontend/src/constants/factor.ts` → `frontend/src/pages/Factors.tsx`
+
+## 因子版本与生效期（固化口径）
+
+- `carbon_factors` 在原有地区/分类/子类型基础上新增 `version`、`effective_date`、`status(active|inactive)`。
+- 生效区间为**左闭右开** `[effective_date, 下一版本 effective_date)`；数据库唯一约束
+  `uk_factor_version(region, category, sub_type, effective_date)` 把时间轴切成互不重叠的区间，
+  因此同一地区/分类/子类型在任一日期只有一个版本；并发发布同一日期时第二条触发唯一键冲突，返回 `409 FACTOR_VERSION_CONFLICT`，只成功一次。
+- 管理员接口（`requireRole=admin`，均写审计日志）：
+  - `POST /factors`：发布新版本，`effective_date` 只能是今天或未来；版本号在该因子内 `max(version)+1`。
+  - `PATCH /factors/:id`：修正**尚未生效**版本的因子值/单位/生效日期；已生效版本返回 `409 FACTOR_VERSION_EFFECTIVE` 锁定；已被活动固化的版本返回 `409 FACTOR_VERSION_REFERENCED`。
+  - `PATCH /factors/:id/status`：停用 / 重新启用版本。
+- `activities` 新增固化列 `factor_version`、`factor_value_snapshot`、`factor_effective_date`。
+  新增或修改活动时，后端按 `record_date` 用 `effective_date <= record_date` 取最近的启用版本计算 `carbon_value` 并写入快照；
+  之后发布新版本或停用旧版本都**不会回写**旧活动。仪表盘、目标进度、排行榜始终汇总活动的固化 `carbon_value`。
+- 停用版本只影响之后的“按日期匹配”，不删除版本、不影响已引用活动。
+- 老库升级：首次启动由 `database/migrations/002_factor_versions.sql` 幂等补列、补唯一约束并回填历史活动快照（存量因子视为 2000-01-01 生效的 v1）。
 
 ## 横切关注点
 

@@ -15,6 +15,7 @@ services:
     volumes:
       - carbontrack_mysql_data:/var/lib/mysql
       - ./database/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./database/migrations/002_factor_versions.sql:/docker-entrypoint-initdb.d/002-factor-versions.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
       interval: 10s

@@ -1,4 +1,5 @@
 import { ActivityCategory } from './activity';
+import { FactorStatus } from './factor';
 import { GoalStatus } from './goal';
 
 export const ErrorCodes = {
@@ -9,6 +10,12 @@ export const ErrorCodes = {
   USER_NOT_FOUND: 'USER_NOT_FOUND',
   ACTIVITY_CATEGORY_INVALID: `ACTIVITY_CATEGORY_INVALID:${Object.values(ActivityCategory).join('|')}`,
   GOAL_STATUS_INVALID: `GOAL_STATUS_INVALID:${Object.values(GoalStatus).join('|')}`,
+  FACTOR_NOT_FOUND: 'FACTOR_NOT_FOUND',
+  FACTOR_VERSION_CONFLICT: 'FACTOR_VERSION_CONFLICT',
+  FACTOR_VERSION_EFFECTIVE: 'FACTOR_VERSION_EFFECTIVE',
+  FACTOR_VERSION_REFERENCED: 'FACTOR_VERSION_REFERENCED',
+  FACTOR_STATUS_INVALID: `FACTOR_STATUS_INVALID:${Object.values(FactorStatus).join('|')}`,
+  FACTOR_EFFECTIVE_DATE_INVALID: 'FACTOR_EFFECTIVE_DATE_INVALID',
   DATABASE_FAILED: 'DATABASE_FAILED'
 } as const;
 

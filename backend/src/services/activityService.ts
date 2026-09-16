@@ -49,20 +49,26 @@ export class ActivityService {
       throw new AppError(ErrorCodes.ACTIVITY_CATEGORY_INVALID, `Activity[id=0] create failed: category invalid`);
     }
     const user = await this.userService.findById(userId);
-    const factor = await this.factorService.findMatching(input.category, input.subType, user.region);
+    const recordDate = dayjs(input.recordDate).format('YYYY-MM-DD');
+    // 按“活动日期”匹配当时生效的因子版本，而不是当前最新版本。
+    const factor = await this.factorService.findEffectiveAt(input.category, input.subType, user.region, recordDate);
     const carbonValue = calculateCarbonValue({ category: input.category, amount: Number(input.amount), factorValue: Number(factor.factorValue) });
     const activity = this.activityRepo.create({
       userId,
       factorId: Number(factor.id),
+      factorVersion: factor.version,
+      factorValueSnapshot: factor.factorValue,
+      factorEffectiveDate: factor.effectiveDate,
       category: input.category,
       subType: input.subType,
       amount: String(input.amount),
       unit: input.unit,
       carbonValue: String(carbonValue),
-      recordDate: dayjs(input.recordDate).format('YYYY-MM-DD'),
+      recordDate,
       note: input.note || null
     });
     const saved = await this.activityRepo.save(activity);
+    logTemplate('info', 'ACTIVITY_FACTOR_PINNED', { id: saved.id, factorId: factor.id, version: factor.version, effectiveDate: factor.effectiveDate });
     logTemplate('info', 'ACTIVITY_CREATE_SUCCESS', { id: saved.id, carbonValue });
     return { message: Messages.ACTIVITY_CREATED, activity: saved };
   }
@@ -74,22 +80,32 @@ export class ActivityService {
       logTemplate('warn', 'ACTIVITY_UPDATE_FAILED', { id, field: 'Activity.id', reason: 'not found' });
       throw new AppError(ErrorCodes.ACTIVITY_NOT_FOUND, `Activity[id=${id}] update failed: id not found`, HttpStatus.NOT_FOUND);
     }
-    const nextCategory = input.category ?? activity.category;
-    const nextSubType = input.subType ?? activity.subType;
-    const nextAmount = Number(input.amount ?? activity.amount);
-    const user = await this.userService.findById(userId);
-    const factor = await this.factorService.findMatching(nextCategory, nextSubType, user.region);
-    const carbonValue = calculateCarbonValue({ category: nextCategory, amount: nextAmount, factorValue: Number(factor.factorValue) });
-    activity.category = nextCategory;
-    activity.subType = nextSubType;
-    activity.amount = String(nextAmount);
+
+    const nextRecordDate = input.recordDate ? dayjs(input.recordDate).format('YYYY-MM-DD') : activity.recordDate;
+    activity.category = input.category ?? activity.category;
+    activity.subType = input.subType ?? activity.subType;
+    activity.amount = input.amount !== undefined ? String(input.amount) : activity.amount;
     activity.unit = input.unit ?? activity.unit;
-    activity.factorId = Number(factor.id);
-    activity.carbonValue = String(carbonValue);
-    activity.recordDate = input.recordDate ? dayjs(input.recordDate).format('YYYY-MM-DD') : activity.recordDate;
+    activity.recordDate = nextRecordDate;
     activity.note = input.note ?? activity.note;
+
+    // 仅当影响计算的字段变化时，才按活动日期重新匹配当时生效版本并重算。
+    // 只改备注/单位，或因子版本被停用，都保留既有固化结果。
+    const calcChanged = ['category', 'subType', 'amount', 'recordDate'].some((field) => input[field as keyof ActivityInput] !== undefined);
+    if (calcChanged) {
+      const user = await this.userService.findById(userId);
+      const factor = await this.factorService.findEffectiveAt(activity.category, activity.subType, user.region, nextRecordDate);
+      const carbonValue = calculateCarbonValue({ category: activity.category, amount: Number(activity.amount), factorValue: Number(factor.factorValue) });
+      activity.factorId = Number(factor.id);
+      activity.factorVersion = factor.version;
+      activity.factorValueSnapshot = factor.factorValue;
+      activity.factorEffectiveDate = factor.effectiveDate;
+      activity.carbonValue = String(carbonValue);
+      logTemplate('info', 'ACTIVITY_FACTOR_PINNED', { id, factorId: factor.id, version: factor.version, effectiveDate: factor.effectiveDate });
+    }
+
     const saved = await this.activityRepo.save(activity);
-    logTemplate('info', 'ACTIVITY_UPDATE_SUCCESS', { id: saved.id, carbonValue });
+    logTemplate('info', 'ACTIVITY_UPDATE_SUCCESS', { id: saved.id, carbonValue: saved.carbonValue });
     return { message: Messages.ACTIVITY_UPDATED, activity: saved };
   }
 

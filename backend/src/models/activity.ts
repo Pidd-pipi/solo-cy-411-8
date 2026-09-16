@@ -14,6 +14,17 @@ export class Activity {
   @Column({ name: 'factor_id', type: 'bigint', nullable: true })
   factorId!: number | null;
 
+  // 固化的因子版本快照：发布新版本或停用旧版本都不回写这些列，
+  // 因此既有活动的 carbon_value 永远保持创建/修改当时的结果。
+  @Column({ name: 'factor_version', type: 'int', nullable: true })
+  factorVersion!: number | null;
+
+  @Column({ name: 'factor_value_snapshot', type: 'decimal', precision: 12, scale: 4, nullable: true })
+  factorValueSnapshot!: string | null;
+
+  @Column({ name: 'factor_effective_date', type: 'date', nullable: true })
+  factorEffectiveDate!: string | null;
+
   @Column({ type: 'enum', enum: ActivityCategory })
   category!: ActivityCategory;
 

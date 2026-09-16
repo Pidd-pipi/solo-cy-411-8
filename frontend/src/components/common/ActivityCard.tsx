@@ -1,4 +1,4 @@
-import { Card, Space, Typography } from 'antd';
+import { Card, Space, Tag, Tooltip, Typography } from 'antd';
 import { Activity } from '../../types/entities';
 import { formatCarbon, formatDate } from '../../utils/formatters';
 import { CategoryBadge } from './CategoryBadge';
@@ -16,6 +16,11 @@ export function ActivityCard({ activity }: { activity: Activity }) {
           <span>{formatDate(activity.recordDate)}</span>
           <span>{activity.note || '无备注'}</span>
         </div>
+        {activity.factorVersion != null && (
+          <Tooltip title={`按活动日期固化的因子版本（生效于 ${activity.factorEffectiveDate || '-'}），后续发布不会重算`}>
+            <Tag>因子 v{activity.factorVersion}</Tag>
+          </Tooltip>
+        )}
       </Space>
     </Card>
   );

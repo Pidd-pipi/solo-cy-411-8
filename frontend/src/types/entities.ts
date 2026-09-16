@@ -1,4 +1,5 @@
 import { ActivityCategory } from '../constants/activity';
+import { FactorStatus } from '../constants/factor';
 import { GoalStatus } from '../constants/goal';
 
 export interface User {
@@ -18,6 +19,11 @@ export interface CarbonFactor {
   factorValue: string;
   unit: string;
   region: string;
+  // 版本化字段
+  version: number;
+  effectiveDate: string;
+  status: FactorStatus;
+  createdAt?: string;
   updatedAt: string;
 }
 
@@ -25,6 +31,10 @@ export interface Activity {
   id: number;
   userId: number;
   factorId?: number | null;
+  // 固化的因子版本快照：不随后续发布/停用而变化
+  factorVersion?: number | null;
+  factorValueSnapshot?: string | null;
+  factorEffectiveDate?: string | null;
   category: ActivityCategory;
   subType: string;
   amount: string;
