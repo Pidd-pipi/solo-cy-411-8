@@ -119,11 +119,11 @@ async function indexExists(pool, table, index) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function buildServerEnv(database, port, jwtSecret) {
+function buildServerEnv(database, port, jwtSecret, logLevel) {
   return {
     ...process.env,
     NODE_ENV: 'test',
-    LOG_LEVEL: process.env.LOG_LEVEL || 'error',
+    LOG_LEVEL: logLevel || process.env.LOG_LEVEL || 'error',
     PORT: String(port),
     MYSQL_HOST: DB_HOST,
     MYSQL_PORT: String(DB_PORT),
@@ -135,12 +135,12 @@ function buildServerEnv(database, port, jwtSecret) {
   };
 }
 
-/** 仅启动子进程并返回句柄，不等待健康（用于测试“基础表尚未就绪时等待”）。 */
-async function spawnServer({ database, port, jwtSecret = 'regtest-secret' } = {}) {
+/** 仅启动子进程并返回句柄，不等待健康（用于测试“基础表尚未就绪时等待”/多实例并发）。 */
+async function spawnServer({ database, port, jwtSecret = 'regtest-secret', logLevel } = {}) {
   const listenPort = port || (await getFreePort());
   const child = spawn(process.execPath, [path.join(REPO_ROOT, 'backend', 'dist', 'main.js')], {
     cwd: path.join(REPO_ROOT, 'backend'),
-    env: buildServerEnv(database, listenPort, jwtSecret),
+    env: buildServerEnv(database, listenPort, jwtSecret, logLevel),
     stdio: ['ignore', 'pipe', 'pipe']
   });
   let out = '';
@@ -178,8 +178,15 @@ async function loadInitIntoExisting(name) {
  * 启动真实后端子进程（dist/main.js）。
  * 默认等待迁移完成且 /health 就绪；expectFailure=true 时等待进程以非零码退出（迁移阻断启动）。
  */
-async function startServer({ database, port, expectFailure = false, jwtSecret = 'regtest-secret', startupTimeoutMs = 90000 } = {}) {
-  const handle = await spawnServer({ database, port, jwtSecret });
+async function startServer({
+  database,
+  port,
+  expectFailure = false,
+  jwtSecret = 'regtest-secret',
+  logLevel,
+  startupTimeoutMs = 90000
+} = {}) {
+  const handle = await spawnServer({ database, port, jwtSecret, logLevel });
 
   const exited = new Promise((resolve) => handle.child.on('exit', (code) => resolve(code)));
 
@@ -219,6 +226,47 @@ async function stopServer(child) {
     }, 5000);
     child.on('exit', () => { clearTimeout(t); resolve(); });
   });
+}
+
+/**
+ * 在同一数据源上“并发”启动 n 个真实实例（模拟多副本同时发布）。
+ * - expectFailure=true：等待每个实例都以非零码退出（迁移失败，全体拒绝服务）。
+ * - 否则等待全部实例健康；leader/waiter 角色从迁移日志中判定。
+ */
+async function startCluster({
+  database,
+  count = 2,
+  expectFailure = false,
+  logLevel = 'info',
+  startupTimeoutMs = 90000
+} = {}) {
+  const handles = await Promise.all(
+    Array.from({ length: count }, () => spawnServer({ database, logLevel }))
+  );
+
+  if (expectFailure) {
+    const exitCodes = await Promise.all(
+      handles.map((h) =>
+        Promise.race([
+          new Promise((resolve) => h.child.on('exit', (c) => resolve(c))),
+          sleep(startupTimeoutMs).then(() => '__timeout__')
+        ])
+      )
+    );
+    return { handles, exitCodes };
+  }
+
+  await Promise.all(handles.map((h) => waitForHealthy(h, { timeoutMs: startupTimeoutMs })));
+
+  // 给迁移日志一点时间刷盘，再判定 leader/waiter。
+  await sleep(300);
+  const roles = handles.map((h) => {
+    const log = h.out();
+    if (log.includes('role=leader')) return 'leader';
+    if (log.includes('role=waiter')) return 'waiter';
+    return log.includes('already applied, skipping') ? 'skip' : 'unknown';
+  });
+  return { handles, roles };
 }
 
 /** 直接对真实数据库做变更（模拟运维修复重复数据）。 */
@@ -271,6 +319,7 @@ module.exports = {
   columnExists,
   indexExists,
   startServer,
+  startCluster,
   spawnServer,
   waitForHealthy,
   loadInitIntoExisting,
