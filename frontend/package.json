@@ -1,0 +1,32 @@
+{
+  "name": "carbontrack-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 18411",
+    "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
+    "preview": "vite preview --host 0.0.0.0 --port 18411"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.5.2",
+    "@vitejs/plugin-react": "^4.3.4",
+    "antd": "^5.22.5",
+    "axios": "^1.7.9",
+    "dayjs": "^1.11.13",
+    "echarts": "^5.5.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6"
+  }
+}
+

@@ -1,0 +1,108 @@
+:root {
+  color: #203029;
+  background: #eef3ee;
+  font-family: Avenir Next, Segoe UI, PingFang SC, Hiragino Sans GB, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background: #eef3ee;
+}
+
+.app-layout {
+  min-height: 100vh;
+  background: #eef3ee;
+}
+
+.app-sider {
+  background: #f8faf6 !important;
+  border-right: 1px solid #dfe7df;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 18px 14px;
+  color: #203029;
+}
+
+.brand-block h4 {
+  margin: 0;
+}
+
+.brand-block span {
+  color: #6d7c73;
+  font-size: 12px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  background: #2f7d59;
+  color: #f8faf6;
+  font-weight: 800;
+}
+
+.app-header {
+  background: #f8faf6;
+  border-bottom: 1px solid #dfe7df;
+  padding: 0 24px;
+}
+
+.app-content {
+  padding: 28px;
+  max-width: 1320px;
+  width: 100%;
+}
+
+.chart-panel {
+  width: 100%;
+  height: 320px;
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.activity-card,
+.goal-card {
+  border-color: #dfe7df;
+}
+
+.muted,
+.split-line {
+  color: #6d7c73;
+  font-size: 12px;
+}
+
+.split-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .app-header {
+    padding: 0 12px;
+  }
+
+  .app-content {
+    padding: 18px 14px;
+  }
+
+  .split-line {
+    flex-direction: column;
+  }
+}
